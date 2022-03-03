@@ -1,0 +1,23 @@
+create sequence public.course_offering_id_seq
+    as integer;
+
+alter sequence public.course_offering_id_seq owner to postgres;
+
+alter sequence public.course_offering_id_seq owned by public.course_offering.id;
+
+grant usage on sequence public.course_offering_id_seq to teacher;
+
+create sequence public.time_slots_time_slot_id_seq1
+    as integer;
+
+alter sequence public.time_slots_time_slot_id_seq1 owner to postgres;
+
+alter sequence public.time_slots_time_slot_id_seq1 owned by public.time_slots.time_slot_id;
+
+grant usage on sequence public.time_slots_time_slot_id_seq1 to dean_staff;
+
+create sequence public.student_2019ceb1035_ticket_table_ticket_id_seq
+    as integer;
+
+alter sequence public.student_2019ceb1035_ticket_table_ticket_id_seq owner to postgres;
+

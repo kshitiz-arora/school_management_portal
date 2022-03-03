@@ -1,0 +1,250 @@
+create table public.course_catalogue
+(
+    course_id varchar(10) not null
+        constraint coursecatalogue_pk
+            primary key,
+    l         integer,
+    t         integer,
+    p         integer,
+    s         integer,
+    c         numeric(4, 2)
+);
+
+alter table public.course_catalogue
+    owner to postgres;
+
+grant select on public.course_catalogue to teacher;
+
+grant select on public.course_catalogue to student;
+
+grant select on public.course_catalogue to batch_advisor;
+
+grant select on public.course_catalogue to dean_staff;
+
+create table public.prerequisite
+(
+    course_id              varchar(10) not null,
+    prerequisite_course_id varchar(10) not null
+);
+
+alter table public.prerequisite
+    owner to postgres;
+
+grant select on public.prerequisite to teacher;
+
+grant select on public.prerequisite to student;
+
+grant select on public.prerequisite to batch_advisor;
+
+grant select on public.prerequisite to dean_staff;
+
+create table public.course_offering
+(
+    course_id    varchar(10) not null,
+    semester     integer     not null,
+    year         integer     not null,
+    min_cgpa     numeric(4, 2) default 0,
+    teacher_id   varchar,
+    section      integer     not null,
+    time_slot_id integer,
+    id           serial
+        constraint course_offering_pk
+            primary key,
+    constraint """courseoffering""_pk"
+        unique (course_id, section, semester, year)
+);
+
+alter table public.course_offering
+    owner to postgres;
+
+grant usage on sequence public.course_offering_id_seq to teacher;
+
+create trigger before_course_offered
+    before insert
+    on public.course_offering
+    for each row
+execute procedure public.create_eligible_batches_and_branches();
+
+create trigger course_offered
+    before insert
+    on public.course_offering
+    for each row
+execute procedure public.course_offering_teacher();
+
+grant delete, insert, select, update on public.course_offering to teacher;
+
+grant select on public.course_offering to student;
+
+grant select on public.course_offering to batch_advisor;
+
+grant select on public.course_offering to dean_staff;
+
+create table public.time_slots
+(
+    start_time   time                                                              not null,
+    end_time     time                                                              not null,
+    time_slot_id integer default nextval('time_slots_time_slot_id_seq1'::regclass) not null
+        constraint time_slots_pk
+            primary key
+);
+
+comment on table public.time_slots is 'start time and end time are in 24 hour format. For example: 09.05';
+
+alter table public.time_slots
+    owner to postgres;
+
+create unique index time_slots_time_slot_id_uindex
+    on public.time_slots (time_slot_id);
+
+grant select on public.time_slots to teacher;
+
+grant select on public.time_slots to student;
+
+grant select on public.time_slots to batch_advisor;
+
+grant delete, insert, references, select, trigger, truncate, update on public.time_slots to dean_staff;
+
+create table public.teacher
+(
+    teacher_id varchar(30) not null
+        constraint teacher_pk
+            primary key,
+    name       varchar(30),
+    department varchar(30)
+);
+
+alter table public.teacher
+    owner to postgres;
+
+create trigger teacher_ticket_trigger
+    before insert
+    on public.teacher
+    for each row
+execute procedure public.teacher_ticket_table_maker();
+
+grant select on public.teacher to teacher;
+
+grant select on public.teacher to student;
+
+grant select on public.teacher to batch_advisor;
+
+grant select on public.teacher to dean_staff;
+
+create table public.student_record
+(
+    student_id               char(11) not null
+        constraint studentrecord_pk
+            primary key,
+    name                     varchar(30),
+    batch                    integer,
+    branch                   char(3),
+    program_core_credits     numeric(5, 2) default 0,
+    program_elective_credits numeric(5, 2) default 0,
+    open_elective_credits    numeric(5, 2) default 0,
+    science_core_credits     numeric(5, 2) default 0,
+    current_semester         integer       default 1
+);
+
+alter table public.student_record
+    owner to postgres;
+
+create trigger new_student_semester
+    before insert or update
+    on public.student_record
+    for each row
+execute procedure public.create_student_semester_record_and_ticket();
+
+grant select on public.student_record to teacher;
+
+grant select on public.student_record to student;
+
+grant select on public.student_record to batch_advisor;
+
+grant select on public.student_record to dean_staff;
+
+create table public.dean_staff_table
+(
+    staff_id varchar(30) not null
+        constraint dean_staff_pk
+            primary key,
+    name     varchar(30) not null
+);
+
+comment on table public.dean_staff_table is 'Information about staff members of dean';
+
+alter table public.dean_staff_table
+    owner to postgres;
+
+create unique index dean_staff_staff_id_uindex
+    on public.dean_staff_table (staff_id);
+
+grant select on public.dean_staff_table to dean_staff;
+
+create table public.batch_advisor
+(
+    batch_advisor_id varchar,
+    batch            integer,
+    branch           char(3)
+);
+
+alter table public.batch_advisor
+    owner to postgres;
+
+create trigger batch_advisor_ticket_trigger
+    before insert
+    on public.batch_advisor
+    for each row
+execute procedure public.batch_advisor_ticket_table_maker();
+
+grant select on public.batch_advisor to teacher;
+
+grant select on public.batch_advisor to student;
+
+grant select on public.batch_advisor to batch_advisor;
+
+grant select on public.batch_advisor to dean_staff;
+
+create table public.dean_ticket_table
+(
+    ticket_id             integer,
+    course_id             varchar,
+    student_id            char(11),
+    comment               varchar,
+    teacher_verdict       varchar,
+    batch_advisor_verdict varchar,
+    dean_verdict          varchar,
+    co_id                 integer
+);
+
+alter table public.dean_ticket_table
+    owner to postgres;
+
+create table public.approved_courses
+(
+    course_id  varchar(10) not null,
+    student_id char(11)    not null,
+    semester   integer     not null,
+    year       integer     not null,
+    teacher_id varchar(30) not null,
+    section    integer,
+    constraint approved_courses_pkey
+        primary key (course_id, student_id)
+);
+
+comment on table public.approved_courses is 'Table containing approved courses of each student';
+
+alter table public.approved_courses
+    owner to postgres;
+
+create trigger check_eligibility_trigger
+    before insert
+    on public.approved_courses
+    for each row
+execute procedure public.eligibility_checker_trigger_function();
+
+grant select on public.approved_courses to teacher;
+
+grant insert, select on public.approved_courses to student;
+
+grant select on public.approved_courses to dean_staff;
+

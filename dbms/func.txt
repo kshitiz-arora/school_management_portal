@@ -1,0 +1,462 @@
+create function public.create_eligible_batches_and_branches() returns trigger
+    language plpgsql
+as
+$$
+declare
+    eligible_id varchar := new.course_id || new.semester || new.year || new.section;
+begin
+    --     select * from NEW;
+
+    execute format('create table if not exists batch%I(name integer)', eligible_id);
+    execute format('create table if not exists branch%I(name char(3))', eligible_id);
+
+    execute format('grant select on %I to student, batch_advisor, dean_staff;', 'batch' || eligible_id);
+    execute format('grant select on %I to student, batch_advisor, dean_staff;', 'branch' || eligible_id);
+
+    execute format('grant all on %I,%I to %I', 'batch' || eligible_id, 'branch' || eligible_id,
+                   'teacher_' || new.teacher_id);
+    raise notice 'You can now specify the eligible batches and branches for this course. The table names are batch%(batch int) and branch%(branch varchar) respectively.'
+        , eligible_id, eligible_id;
+    return NEW;
+end
+$$;
+
+alter function public.create_eligible_batches_and_branches() owner to postgres;
+
+create function public.create_student_semester_record_and_ticket() returns trigger
+    language plpgsql
+as
+$$
+declare
+    null_numeric         numeric(4, 2) := NULL;
+    student_ticket_table varchar       ='student_' || new.student_id || '_ticket_table';
+begin
+    if (tg_op = 'INSERT') then
+        execute format('create table if not exists %I
+        (
+        semester int,
+        registered_credits numeric(4,2),
+        earned_credits numeric(4,2),
+        sg numeric(4,2),
+        cg numeric(4,2)
+        );', 'student_' || new.student_id || '_semester_record');
+        execute format('grant select on %I to %I', 'student_' || new.student_id || '_semester_record',
+                       'student_' || new.student_id);
+        execute format('grant select on %I to dean_staff', 'student_' || new.student_id || '_semester_record');
+
+        --creating student ticket table
+        execute format('create table if not exists %I' ||
+                       '(student_id char(11),' ||
+                       'course_id varchar,' ||
+                       'ticket_id int,' ||
+                       'comment varchar,' ||
+                       'status varchar,' ||
+                       'teacher_id varchar,' ||
+                       'co_id int);', student_ticket_table);
+        execute format('grant select on %I to dean_staff', student_ticket_table);
+        execute format('grant select, insert on %I to dean_staff, %I', student_ticket_table,
+                       'student_' || new.student_id);
+        execute format('grant select, update on %I to teacher, batch_advisor', student_ticket_table);
+    end if;
+    raise notice 'yha bhi aya';
+    if (tg_op = 'INSERT' or (tg_op = 'UPDATE' and new.current_semester <> old.current_semester)) then
+        execute format('insert into %I values($1,$2,$3,$4,$5);', 'student_' || new.student_id ||
+                                                                 '_semester_record') using new.current_semester,0,0,null_numeric,null_numeric;
+        execute format('create table if not exists %I
+        (
+        course_id varchar,
+        time_slot_id int,
+        credits numeric(4,2),
+        grade int
+        );
+        ', 'student_' || new.student_id || '_semester_' || new.current_semester || '_courses');
+
+        execute format('create trigger %I
+                       after update
+                       on %I
+                       for each row
+                       execute procedure %I(%I,%I);',
+                       'trigger_' || 'student_' || new.student_id || '_semester_' || new.current_semester || '_courses',
+                       'student_' || new.student_id || '_semester_' || new.current_semester || '_courses',
+                       'update_sg_cg', new.student_id, new.current_semester);
+        execute format('grant select on %I to %I,dean_staff',
+                       'student_' || new.student_id || '_semester_' || new.current_semester || '_courses',
+                       'student_' || new.student_id);
+    end if;
+    return NEW;
+end
+
+$$;
+
+alter function public.create_student_semester_record_and_ticket() owner to postgres;
+
+create function public.course_offering_teacher() returns trigger
+    language plpgsql
+as
+$$
+declare
+    table_name varchar := new.course_id || new.semester || new.year || new.section ;
+begin
+    execute format('create table if not exists %I(
+                   student_id char(11),
+                   grade int);', 'prof_record_' || table_name);
+    execute format('grant all on %I to %I;', 'prof_record_' || table_name, 'teacher_' || new.teacher_id);
+    return new;
+end
+$$;
+
+alter function public.course_offering_teacher() owner to postgres;
+
+create function public.update_grade() returns trigger
+    language plpgsql
+as
+$$
+declare
+    studentid     char(11) := tg_argv[0];
+    courseid      varchar  := tg_argv[1];
+    grade_1       int      := tg_argv[2];
+    curr_semester int;
+    table_name    varchar;
+begin
+    select student_record.current_semester
+    into curr_semester
+    from student_record
+    where studentid = student_record.student_id;
+    table_name := 'student_' || studentid || '_semester_' || curr_semester || '_courses';
+
+    update table_name
+    set table_name.grade = grade_1
+    where courseid = table_name.course_id;
+end
+$$;
+
+alter function public.update_grade() owner to postgres;
+
+create function public.update_sg_cg() returns trigger
+    language plpgsql
+as
+$$
+declare
+    studentid               char(11) := tg_argv[0];
+    curr_sem                int      := tg_argv[1];
+    table_1                 varchar  := 'student_' || studentid || '_semester_record';
+    table_2                 varchar  := 'student_' || studentid || '_semester_' || curr_sem || '_courses';
+    cursor_1                refcursor ;
+    cursor_2                refcursor;
+    rec_1                   record;
+    rec_2                   record;
+    all_graded              int      := 1;
+    points_earned_sg        int      := 0;
+    points_earned_cg        int      := 0;
+    total_credits           int      := 0;
+    cg_till_now             numeric(4, 2);
+    credits_earned_till_now numeric(4, 2);
+    temp                    int;
+begin
+    raise notice '% %',tg_argv[0],tg_argv[1];
+    raise notice 'grade is %',new.grade;
+    if (new.grade > 2) then
+        execute format('select earned_credits from %I where semester = $1', table_1) using curr_sem into temp;
+        execute format('update %I
+        set earned_credits = $2
+        where semester  = $1', table_1) using curr_sem,new.credits + temp;
+    end if;
+
+    open cursor_1 for execute format('select grade, credits from %I', table_2);
+    loop
+        fetch cursor_1 into rec_1;
+        exit when not found;
+        raise notice '%',rec_1;
+        if rec_1.grade is NULL then
+            all_graded = 0; exit;
+        end if;
+        points_earned_sg := points_earned_sg + (rec_1.credits * rec_1.grade);
+    end loop;
+    close cursor_1;
+    raise notice 'yha aya';
+    if all_graded = 0 then
+        return new;
+    end if;
+    raise notice 'yha aya1';
+    execute format('update %I
+    set sg = $1 / registered_credits
+    where semester = $2', table_1) using points_earned_sg,curr_sem;
+    raise notice 'yha aya2';
+    cg_till_now := 0;
+    credits_earned_till_now := 0;
+    open cursor_2 for execute format('select * from %I', table_1);
+    loop
+        fetch cursor_2 into rec_2;
+        exit when not found;
+        if (rec_2.semester < curr_sem) then
+            credits_earned_till_now := credits_earned_till_now + rec_2.earned_credits;
+        end if;
+    end loop;
+    raise notice 'yha aya3';
+    close cursor_2;
+    if (curr_sem > 1) then
+        execute format('select cg from %I where semester = $1', table_1) using curr_sem - 1 into cg_till_now;
+    end if;
+    raise notice 'yha aya4';
+    points_earned_cg := cg_till_now * credits_earned_till_now;
+
+    open cursor_1 for execute format('select * from %I', table_2);
+    loop
+        fetch cursor_1 into rec_1;
+        exit when not found;
+        if rec_1.grade > 2 then
+            points_earned_cg := points_earned_cg + (rec_1.credits * rec_1.grade);
+            credits_earned_till_now := credits_earned_till_now + rec_1.credits;
+        end if;
+    end loop;
+    close cursor_1;
+    raise notice 'yha aya5';
+    execute format('update %I
+    set cg = $1 / $2
+    where semester = $3', table_1) using points_earned_cg, credits_earned_till_now, curr_sem;
+    update student_record
+    set current_semester = current_semester + 1
+    where student_id = studentid;
+    raise notice 'yha aya6';
+    return new;
+end
+$$;
+
+alter function public.update_sg_cg() owner to postgres;
+
+create function public.teacher_ticket_table_maker() returns trigger
+    language plpgsql
+as
+$$
+begin
+    execute format('create table %I(' ||
+                   'co_id integer,
+                    ticket_id integer,
+                    course_id varchar,
+                    student_id char(11),
+                    comment varchar,
+                    teacher_verdict varchar);', new.teacher_id || '_teacher_ticket_table');
+    execute format('grant all on %I to %I;', new.teacher_id || '_teacher_ticket_table', 'teacher_' || new.teacher_id);
+    execute format('grant select, delete on %I to %I;', new.teacher_id || '_teacher_ticket_table', 'batch_advisor');
+    return NEW;
+end;
+$$;
+
+alter function public.teacher_ticket_table_maker() owner to postgres;
+
+create function public.batch_advisor_ticket_table_maker() returns trigger
+    language plpgsql
+as
+$$
+begin
+    execute format('create table %I(' ||
+                   'co_id integer,
+                    ticket_id integer,
+                    course_id varchar,
+                    student_id char(11),
+                    comment varchar,
+                    teacher_verdict varchar,' ||
+                   'batch_advisor_verdict varchar);', new.batch_advisor_id || '_batch_advisor_ticket_table');
+    execute format('grant all on %I to %I;', new.batch_advisor_id || '_batch_advisor_ticket_table',
+                   'batch_advisor_' || new.batch_advisor_id);
+    return NEW;
+end;
+$$;
+
+alter function public.batch_advisor_ticket_table_maker() owner to postgres;
+
+create function public.eligibility_checker_trigger_function() returns trigger
+    language plpgsql
+as
+$$
+declare
+    studentid               char(11)          := new.student_id;
+    courseid                character varying := new.course_id;
+    semester_var            integer           := new.semester;
+    year_var                integer           := new.year;
+    section_var             integer           := new.section;
+    coid                    int;
+    teacher_id              varchar;
+    time_slotid             int;
+    student_semester_record varchar           := 'student_' || studentid || '_semester_record';
+    course_table_name       varchar(50);
+    cursor_prerequisite cursor (course_id1 varchar) for select prerequisite.prerequisite_course_id
+                                                        from prerequisite
+                                                        where prerequisite.course_id = course_id1;
+    cursor_semester         refcursor;
+    courses_of_curr_sem     varchar;
+    cursor_courses          refcursor;
+    rec1                    record; rec2 record; rec3 record;
+    flag                    int               := 1;
+    max_credits             numeric(4, 2);
+    reg_credits             numeric(4, 2);
+    curr_sem                int;
+    eligible_batch_table    varchar           := 'batch' || new.course_id || new.semester || new.year || new.section;
+    eligible_branch_table   varchar           := 'branch' || new.course_id || new.semester || new.year || new.section;
+    student_batch           int;
+    student_branch          char(3);
+begin
+
+    select co.id
+    into coid
+    from course_offering co
+    where co.semester = semester_var
+      and co.year = year_var
+      and co.section = section_var
+      and co.course_id = courseid;
+
+    --getting teacher_id of the course for raising a ticket later
+    select course_offering.teacher_id
+    into teacher_id
+    from course_offering
+    where courseid = course_id
+      and semester_var = semester
+      and year_var = year
+      and section_var = section;
+
+    execute format('select max(ssr.semester)
+    from %I ssr;', student_semester_record) into curr_sem;
+    course_table_name := 'student_' || studentid || '_semester_' || curr_sem || '_courses';
+    -- getting time_slot_id of course to be taken from course_offering
+    select co.time_slot_id
+    into time_slotid
+    from course_offering as co
+    where courseid = co.course_id
+      and semester_var = co.semester
+      and year_var = co.year
+      and section_var = co.section;
+
+
+    -- checking time slot clash from previous courses of same semester
+
+    execute format('select count(*)
+                   from %I
+                   where time_slot_id=$1;', course_table_name) using time_slotid into flag;
+    if flag > 0 then
+        raise notice 'time slot clash occurred';
+        return null;
+    end if;
+
+    -- checking if prerequisites are met
+    flag := 1;
+    open cursor_prerequisite(courseid);
+    loop
+        fetch cursor_prerequisite into rec1;
+        exit when not found;
+        flag = 0;
+
+        open cursor_semester for execute format('select semester from %I;', student_semester_record);
+
+        loop
+            fetch cursor_semester into rec2;
+            exit when not found;
+            if (rec2.semester = curr_sem) then
+                exit;
+            end if;
+            courses_of_curr_sem := 'student_' || studentid || '_semester_' || rec2.semester || '_courses';
+            open cursor_courses for
+                execute format('select * from %I
+                where course_id=$1 and grade > $2', courses_of_curr_sem) using rec1.prerequisite_course_id,2;
+            loop
+                fetch cursor_courses into rec3;
+                exit when not found;
+                flag = 1;exit;
+            end loop;
+            close cursor_courses;
+            if flag = 1 then
+                exit;
+            end if;
+        end loop;
+        close cursor_semester;
+        if flag = 0 then
+            raise notice 'prerequisite %I not met',rec1;
+            close cursor_prerequisite;
+            return null;
+        end if;
+    end loop;
+    close cursor_prerequisite;
+
+    -- 1.25 rule
+
+    if (curr_sem <= 2) then
+        max_credits := 19.5;
+    else
+        execute format('select sum(ssr.credits)
+       from %I ssr
+       where ssr.semester=$1 or ssr.semester=$2',
+                       student_semester_record) using curr_sem - 1, curr_sem - 2 into max_credits;
+        max_credits := max_credits * 1.25;
+    end if;
+    execute format('select ssr.registered_credits
+    from %I ssr
+    where ssr.semester=$1;', student_semester_record) using curr_sem into reg_credits;
+    if reg_credits > max_credits then
+        raise notice '1.25 rule violated';
+        call raise_ticket(studentid, courseid, '1.25 rule violated', teacher_id, coid);
+        return null;
+    end if;
+
+    -- check uniqueness of registered course
+    open cursor_semester for execute format('select semester from %I;', student_semester_record);
+    loop
+        fetch cursor_semester into rec2;
+        course_table_name := 'student_' || studentid || '_semester_' || rec2.semester || '_courses';
+        open cursor_courses for
+            execute format('select *
+            from %I
+            where %I.course_id = $1;', course_table_name, course_table_name) using courseid;
+        loop
+            fetch cursor_courses into rec3;
+            exit when not found;
+            if rec2.semester < curr_sem and rec3.grade > 2 then
+                raise notice 'you have already completed this course';
+                close cursor_courses;
+                close cursor_semester;
+                return null;
+            end if;
+        end loop;
+        close cursor_courses;
+        if (rec2.semester = curr_sem) then
+            exit;
+        end if;
+    end loop;
+    close cursor_semester;
+
+    -- check if student's batch is eligible to register for the course
+    select sr.batch
+    into student_batch
+    from student_record sr
+    where sr.student_id = studentid;
+
+    execute format('select count(*)
+    from %I
+    where name = $1;', eligible_batch_table) using student_batch into flag;
+
+    if flag = 0 then
+        raise notice '%I batch is not eligible to register for this course', student_batch;
+        call raise_ticket(studentid, courseid, 'batch not eligible', teacher_id, coid);
+        return null;
+    end if;
+
+    -- check if student's branch is eligible to register for the course
+    select sr.branch
+    into student_branch
+    from student_record sr
+    where sr.student_id = studentid;
+
+    execute format('select count(*)
+    from %I
+    where name = $1;', eligible_branch_table) using student_branch into flag;
+
+    if flag = 0 then
+        raise notice '%I branch is not eligible to register for this course', student_branch;
+        call raise_ticket(studentid, courseid, 'branch not eligible', teacher_id, coid);
+        return null;
+    end if;
+
+    return new;
+end
+$$;
+
+alter function public.eligibility_checker_trigger_function() owner to postgres;
+

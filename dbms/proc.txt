@@ -1,0 +1,691 @@
+create procedure public.update_record_dean()
+    language plpgsql
+as
+$$
+declare
+    cursor_1 cursor for select co.course_id, co.semester, co.year, co.section
+                        from course_offering co;
+    rec_1         record;
+    prof_table    varchar;
+    cursor_2      refcursor;
+    rec_2         record;
+    student_table varchar;
+begin
+    open cursor_1;
+    loop
+        fetch cursor_1 into rec_1;
+        exit when not found;
+        prof_table := 'prof_record_' || rec_1.course_id || rec_1.semester || rec_1.year || rec_1.section;
+        open cursor_2 for
+            execute format('select * from %I', prof_table);
+        loop
+            fetch cursor_2 into rec_2;
+            exit when not found;
+            student_table := 'student_' || rec_2.student_id || '_semester_' || rec_1.semester || '_courses';
+            execute format('update %I
+            set grade = $1
+            where course_id = $2', student_table) using rec_2.grade,rec_1.course_id;
+        end loop;
+        close cursor_2;
+    end loop;
+    close cursor_1;
+end;
+$$;
+
+alter procedure public.update_record_dean() owner to postgres;
+
+create procedure public.check_graduation_eligibility(studentid character)
+    language plpgsql
+as
+$$
+declare
+    student_row        student_record%rowtype;
+    cursor_1           refcursor;
+    credits_row        record;
+    flag               bool := true;
+    credits_table_name varchar;
+begin
+    select *
+    into student_row
+    from student_record sr
+    where studentid = sr.student_id;
+    credits_table_name := 'required_credits_batch_' || student_row.batch;
+    open cursor_1 for
+        execute format(' select *
+        from %I', credits_table_name);
+    loop
+        fetch cursor_1 into credits_row;
+        exit when not found;
+        if credits_row.type_of_course = 'program_core' then
+            if credits_row.required_credits <> student_row.program_core_credits then
+                flag = false;
+                exit;
+            end if;
+        elsif credits_row.type_of_course = 'program_elective' then
+            if credits_row.required_credits <> student_row.program_elective_credits then
+                flag = false;
+                exit;
+            end if;
+        elsif credits_row.type_of_course = 'open_elective' then
+            if credits_row.required_credits <> student_row.open_elective_credits then
+                flag = false;
+                exit;
+            end if;
+        elsif credits_row.type_of_course = 'science_elective' then
+            if credits_row.required_credits <> student_row.science_core_credits then
+                flag = false;
+                exit;
+            end if;
+        end if;
+    end loop;
+    close cursor_1;
+    if flag = true then
+        raise notice 'student %I is eligible for graduating!', studentid;
+    else
+        raise notice 'student %I is not eligible for graduating!', studentid;
+    end if;
+    return;
+end;
+$$;
+
+alter procedure public.check_graduation_eligibility(char) owner to postgres;
+
+grant execute on procedure public.check_graduation_eligibility(char) to dean_staff;
+
+create procedure public.update_teacher_and_student_record()
+    language plpgsql
+as
+$$
+declare
+
+    table_name         varchar;
+    null_integer       integer := null;
+    courses cursor for select *
+                       from approved_courses;
+    course_rec         approved_courses%ROWTYPE;
+    student cursor for select *
+                       from student_record;
+    student_rec        student_record%ROWTYPE;
+    course_offered cursor for select *
+                              from course_offering;
+    course_offered_rec course_offering%ROWTYPE;
+    course_cata cursor for select *
+                           from course_catalogue;
+    course_cata_rec    course_catalogue%ROWTYPE;
+begin
+    open courses;
+
+    loop
+        fetch courses into course_rec;
+        exit when not found;
+
+
+        open course_offered;
+
+        loop
+            fetch course_offered into course_offered_rec;
+            exit when not found;
+            if (course_offered_rec.course_id = course_rec.course_id and
+                course_offered_rec.teacher_id = course_rec.teacher_id and
+                course_offered_rec.semester = course_rec.semester and course_rec.year = course_offered_rec.year) then
+                exit;
+            end if;
+        end loop;
+
+        close course_offered;
+
+        open course_cata;
+        loop
+            fetch course_cata into course_cata_rec;
+            exit when not found;
+            if (course_cata_rec.course_id = course_rec.course_id) then
+                exit;
+            end if;
+        end loop;
+
+        close course_cata;
+
+
+        table_name := 'prof_record_' || course_rec.course_id || course_rec.semester || course_rec.year ||
+                      course_offered_rec.section;
+
+        execute format('insert into %I values($1,$2)', table_name) using course_rec.student_id,null_integer;
+        open student;
+        loop
+            fetch student into student_rec;
+            exit when not found;
+
+            if (student_rec.student_id = course_rec.student_id) then
+                table_name := 'student_' || course_rec.student_id || '_semester_' || student_rec.current_semester ||
+                              '_courses';
+                execute format('insert into %I values($1,$2,$3,$4)', table_name) using course_rec.course_id,course_offered_rec.time_slot_id,course_cata_rec.c,null_integer;
+                RAISE NOTICE 'DONE';
+                exit;
+            end if;
+        end loop;
+        close student;
+        execute format('update %I set registered_credits = registered_credits + $1 where semester = $2',
+                       'student_' || course_rec.student_id ||
+                       '_semester_record') using course_cata_rec.c, student_rec.current_semester;
+    end loop;
+
+    close courses;
+
+end
+$$;
+
+alter procedure public.update_teacher_and_student_record() owner to postgres;
+
+create procedure public.export_transcripts(semester_num integer, studentid character)
+    language plpgsql
+as
+$$
+declare
+    file_name  varchar;
+    table_name varchar ;
+    file_path  text;
+begin
+    table_name := 'student_' || studentid || '_semester_' || semester_num || '_courses';
+    file_name := studentid || '_semester_' || semester_num || '_transcript';
+    file_path := 'C:\Users\Public\Documents\' || file_name || '.csv';
+    EXECUTE ('COPY ' || table_name || ' TO ''' || file_path || ''' CSV header');
+
+end
+$$;
+
+alter procedure public.export_transcripts(integer, char) owner to postgres;
+
+grant execute on procedure public.export_transcripts(integer, char) to dean_staff;
+
+create procedure public.create_required_credits_table(batch integer)
+    language plpgsql
+as
+$$
+begin
+
+
+    execute format('create table %I
+    (type_of_course varchar,
+    required_credits int,
+    PRIMARY KEY (type_of_course))', 'required_credits_batch_' || batch);
+
+    execute format('grant select on %I to student, teacher, batch_advisor;', 'required_credits_batch_' || batch);
+
+end
+$$;
+
+alter procedure public.create_required_credits_table(integer) owner to postgres;
+
+create procedure public.course_type(batch integer)
+    language plpgsql
+as
+$$
+begin
+    execute format('create table %I
+    (course_id varchar(10),
+    branch char (3),
+    type_of_course varchar,
+    PRIMARY KEY (course_id, branch))', 'type_of_course_batch_' || batch);
+
+    raise notice 'Table created with name: type_of_course_batch_%', batch;
+
+    execute format('grant select on %I to student,teacher,batch_advisor', 'type_of_course_batch_' || batch);
+end
+$$;
+
+alter procedure public.course_type(integer) owner to postgres;
+
+create procedure public.move_student_tickets(teacher_id character varying)
+    language plpgsql
+as
+$$
+declare
+    record_student         record;
+    record_student_tickets record;
+    cursor_student cursor for select student_record.student_id
+                              from student_record;
+    cursor_student_tickets refcursor;
+    student_ticket_table   varchar;
+    teacher_ticket_table   varchar := teacher_id || '_teacher_ticket_table';
+begin
+    open cursor_student;
+    loop
+        fetch cursor_student into record_student;
+        student_ticket_table = 'student_' || record_student.student_id || '_ticket_table';
+        exit when not found;
+        raise notice '%',record_student.student_id;
+
+        open cursor_student_tickets for execute format('select * from %I;', student_ticket_table);
+        loop
+            fetch cursor_student_tickets into record_student_tickets;
+            exit when not found;
+            if record_student_tickets.teacher_id = move_student_tickets.teacher_id
+            then
+                execute format('INSERT into %I(ticket_id,course_id,student_id,comment,teacher_verdict,co_id) values(
+            $1,
+            $2,
+            $3,
+            $4,
+            null,' ||
+                               '$5
+                );',
+                               teacher_ticket_table) using record_student_tickets.ticket_id,record_student_tickets.course_id,record_student.student_id,record_student_tickets.comment,record_student_tickets.co_id;
+            end if;
+        end loop;
+
+        close cursor_student_tickets;
+    end loop;
+    close cursor_student;
+
+end
+$$;
+
+alter procedure public.move_student_tickets(varchar) owner to postgres;
+
+grant execute on procedure public.move_student_tickets(varchar) to teacher;
+
+create procedure public.give_verdict_teacher(teacher_id character varying DEFAULT '1'::character varying,
+                                             ticket_id integer DEFAULT 1,
+                                             student_id character DEFAULT '2019ceb1035'::bpchar,
+                                             verdict character varying DEFAULT 'accepted'::character varying)
+    language plpgsql
+as
+$$
+declare
+    cursor_teacher_ticket refcursor;
+    record_teacher_ticket record;
+    student_table         varchar='student_' || student_id || '_ticket_table';
+    teacher_table         varchar=teacher_id || '_teacher_' || 'ticket_table';
+begin
+    open cursor_teacher_ticket for execute format('select * from %I;', teacher_table);
+    loop
+        fetch cursor_teacher_ticket into record_teacher_ticket;
+        exit when not found;
+        if record_teacher_ticket.ticket_id = ticket_id and record_teacher_ticket.student_id = student_id then
+            execute format('update %I
+                set teacher_verdict=$1
+                where ticket_id=$2 and student_id=$3;
+                ', teacher_table) using verdict,ticket_id,student_id;
+            exit;
+        end if;
+    end loop;
+
+    --change status in student ticket table to 'pending advisor approval'
+    execute format('update %I
+        set status=''Pending advisor approval''
+        where ticket_id=$1;', student_table) using ticket_id;
+end
+$$;
+
+alter procedure public.give_verdict_teacher(varchar, integer, char, varchar) owner to postgres;
+
+grant execute on procedure public.give_verdict_teacher(varchar, integer, char, varchar) to teacher;
+
+create procedure public.move_teacher_tickets(batch_advisor_id character varying)
+    language plpgsql
+as
+$$
+declare
+    record_teacher             record;
+    record_teacher_tickets     record;
+    cursor_teacher cursor for select teacher.teacher_id
+                              from teacher;
+    cursor_teacher_tickets     refcursor;
+    batch_advisor_batch        int     =(select batch_advisor.batch
+                                         from batch_advisor
+                                         where batch_advisor.batch_advisor_id = move_teacher_tickets.batch_advisor_id);
+    batch_advisor_branch       char(3) =(select batch_advisor.branch
+                                         from batch_advisor
+                                         where batch_advisor.batch_advisor_id = move_teacher_tickets.batch_advisor_id);
+    student_batch              integer;
+    student_branch             char(3);
+    teacher_ticket_table       varchar;
+    batch_advisor_ticket_table varchar=batch_advisor_id || '_batch_advisor_' || 'ticket_table';
+begin
+    open cursor_teacher;
+    loop
+        fetch cursor_teacher into record_teacher;
+        teacher_ticket_table = record_teacher.teacher_id || '_teacher_' || 'ticket_table';
+        exit when not found;
+        open cursor_teacher_tickets for execute format('select * from %I;', teacher_ticket_table);
+        loop
+            fetch cursor_teacher_tickets into record_teacher_tickets;
+            exit when not found;
+            select student_record.batch, student_record.branch
+            into student_batch, student_branch
+            from student_record
+            where student_record.student_id = record_teacher_tickets.student_id;
+            if (student_batch = batch_advisor_batch and student_branch = batch_advisor_branch)
+            then
+                execute format('INSERT into %I(ticket_id,course_id,student_id,comment,teacher_verdict,batch_advisor_verdict,co_id) values(
+                    $1,
+                    $2,
+                    $3,
+                    $4,
+                    $5,
+                    null,' ||
+                               '$6
+                );',
+                               batch_advisor_ticket_table) using record_teacher_tickets.ticket_id,record_teacher_tickets.course_id,
+                    record_teacher_tickets.student_id,record_teacher_tickets.comment,record_teacher_tickets.teacher_verdict,record_teacher_tickets.co_id;
+                execute format('DELETE from %I WHERE CURRENT OF %I;', teacher_ticket_table, cursor_teacher_tickets);
+            end if;
+        end loop;
+        close cursor_teacher_tickets;
+
+    end loop;
+    close cursor_teacher;
+
+end
+$$;
+
+alter procedure public.move_teacher_tickets(varchar) owner to postgres;
+
+grant execute on procedure public.move_teacher_tickets(varchar) to batch_advisor;
+
+create procedure public.give_verdict_batch_advisor(batch_advisor_id character varying, ticket_id integer,
+                                                   student_id character, verdict character varying)
+    language plpgsql
+as
+$$
+declare
+    cursor_batch_advisor_ticket refcursor;
+    record_batch_advisor_ticket record;
+    student_table               varchar='student_' || student_id || '_ticket_table';
+    batch_advisor_table         varchar=batch_advisor_id || '_batch_advisor_' || 'ticket_table';
+begin
+    open cursor_batch_advisor_ticket for execute format('select * from %I', batch_advisor_table);
+    loop
+        fetch cursor_batch_advisor_ticket into record_batch_advisor_ticket;
+        exit when not found;
+
+        if record_batch_advisor_ticket.ticket_id = ticket_id and
+           record_batch_advisor_ticket.student_id = student_id then
+            execute format('update %I
+                set batch_advisor_verdict=$1
+                where ticket_id=$2 and student_id=$3;
+                ', batch_advisor_table) using verdict,ticket_id,student_id;
+            exit;
+        end if;
+    end loop;
+
+    --change status in student ticket table to 'pending dean approval'
+    execute format('update %I
+        set status=''Pending dean approval''
+        where ticket_id=$1;', student_table) using ticket_id;
+end
+$$;
+
+alter procedure public.give_verdict_batch_advisor(varchar, integer, char, varchar) owner to postgres;
+
+grant execute on procedure public.give_verdict_batch_advisor(varchar, integer, char, varchar) to batch_advisor;
+
+create procedure public.move_batch_advisor_tickets()
+    language plpgsql
+as
+$$
+declare
+    record_batch_advisor         record;
+    record_batch_advisor_tickets record;
+    cursor_batch_advisor cursor for select batch_advisor.batch_advisor_id
+                                    from batch_advisor;
+    cursor_batch_advisor_tickets refcursor;
+    batch_advisor_ticket_table   varchar;
+begin
+    open cursor_batch_advisor;
+    loop
+        fetch cursor_batch_advisor into record_batch_advisor;
+        batch_advisor_ticket_table = record_batch_advisor.batch_advisor_id || '_batch_advisor_' || 'ticket_table';
+        exit when not found;
+        open cursor_batch_advisor_tickets for execute format('select * from %I;', batch_advisor_ticket_table);
+        loop
+            fetch cursor_batch_advisor_tickets into record_batch_advisor_tickets;
+            exit when not found;
+            execute format('INSERT into dean_ticket_table(ticket_id,course_id,student_id,
+            comment,teacher_verdict,batch_advisor_verdict,dean_verdict,co_id) values(
+            $1,
+            $2,
+            $3,
+            $4,
+            $5,
+            $6,
+            null,' ||
+                           '$7
+            );') using record_batch_advisor_tickets.ticket_id,record_batch_advisor_tickets.course_id,
+                record_batch_advisor_tickets.student_id,record_batch_advisor_tickets.comment,
+                record_batch_advisor_tickets.teacher_verdict,record_batch_advisor_tickets.batch_advisor_verdict,record_batch_advisor_tickets.co_id;
+            execute format('DELETE from %I WHERE CURRENT OF %I;', batch_advisor_ticket_table,
+                           cursor_batch_advisor_tickets);
+        end loop;
+        close cursor_batch_advisor_tickets;
+
+    end loop;
+    close cursor_batch_advisor;
+
+end
+$$;
+
+alter procedure public.move_batch_advisor_tickets() owner to postgres;
+
+create procedure public.give_verdict_dean(ticket_id integer, student_id character, verdict character varying)
+    language plpgsql
+as
+$$
+declare
+    student_table   varchar='student_' || student_id || '_ticket_table';
+
+    --variables used for updating teacher and student record
+    table_name      varchar;
+    null_integer    integer := null;
+    student cursor for select *
+                       from student_record;
+    student_rec     student_record%ROWTYPE;
+    course_cata cursor for select *
+                           from course_catalogue;
+    course_cata_rec course_catalogue%ROWTYPE;
+    co_id           int;
+    course_id       varchar;
+    semester        int;
+    year            int;
+    section         int;
+    time_slot_id    int;
+begin
+
+    --getting the co_id
+    select dean_ticket_table.co_id
+    into co_id
+    from dean_ticket_table
+    where dean_ticket_table.student_id = give_verdict_dean.student_id
+      and dean_ticket_table.ticket_id = give_verdict_dean.ticket_id;
+
+    update dean_ticket_table
+    set dean_verdict=verdict
+    where dean_ticket_table.ticket_id = give_verdict_dean.ticket_id
+      and dean_ticket_table.student_id = give_verdict_dean.student_id;
+
+
+    --change status in student ticket table to final verdict
+    execute format('update %I
+        set status=$1
+        where ticket_id=$2;', student_table) using verdict,ticket_id;
+
+    --if verdict=approved, then add course to teacher and student record
+
+
+    if verdict = 'approved' then
+
+        select co.time_slot_id, co.section, co.year, co.semester, co.course_id
+        into time_slot_id,section,year,semester,course_id
+        from course_offering as co
+        where co.id = co_id;
+
+        open course_cata;
+        loop
+            fetch course_cata into course_cata_rec;
+            exit when not found;
+            if (course_cata_rec.course_id = course_id) then
+                exit;
+            end if;
+        end loop;
+
+        close course_cata;
+
+
+        table_name := 'prof_record_' || course_id || semester || year || section;
+
+        execute format('insert into %I values($1,$2)', table_name) using student_id,null_integer;
+        open student;
+        loop
+            fetch student into student_rec;
+            exit when not found;
+
+            if (student_rec.student_id = student_id) then
+                table_name := 'student_' || student_id || '_semester_' || student_rec.current_semester || '_courses';
+                execute format('insert into %I values($1,$2,$3,$4)', table_name) using course_id,time_slot_id,course_cata_rec.c,null_integer;
+                execute format('update %I set registered_credits = registered_credits + $1 where semester = $2',
+                               'student_' || student_rec.student_id ||
+                               '_semester_record') using course_cata_rec.c, student_rec.current_semester;
+                exit;
+            end if;
+        end loop;
+        close student;
+
+    end if;
+end
+$$;
+
+alter procedure public.give_verdict_dean(integer, char, varchar) owner to postgres;
+
+create procedure public.create_new_student(student_id character, name character varying)
+    language plpgsql
+as
+$$
+declare
+    batch  int     := substring(student_id, 1, 4);
+    branch char(3) := substring(student_id, 5, 3);
+begin
+    execute format('create role %I with login password ''student''; grant student to %I', 'student_' || student_id,
+                   'student_' || student_id);
+    execute format('insert into student_record values($1, $2, $3, $4);') using student_id, name, batch, branch;
+end;
+$$;
+
+alter procedure public.create_new_student(char, varchar) owner to postgres;
+
+create procedure public.create_new_teacher(teacher_id character varying, name character varying,
+                                           department character varying)
+    language plpgsql
+as
+$$
+begin
+    -- todo: implement
+    execute format('create role %I with login password ''teacher'';grant teacher to %I;', 'teacher_' || teacher_id,
+                   'teacher_' || teacher_id);
+    execute format('insert into teacher(teacher_id,name,department) values($1,$2,$3)') using teacher_id,name,department;
+end
+$$;
+
+alter procedure public.create_new_teacher(varchar, varchar, varchar) owner to postgres;
+
+create procedure public.create_new_batch_advisor(batch_advisor_id character varying, batch integer,
+                                                 branch character varying)
+    language plpgsql
+as
+$$
+begin
+    -- todo: implement
+    execute format('create role %I with login password ''batch_advisor'';grant batch_advisor to %I;',
+                   'batch_advisor_' || batch_advisor_id, 'batch_advisor_' || batch_advisor_id);
+    execute format('insert into batch_advisor(batch_advisor_id,branch,batch) values($1,$2,$3)') using batch_advisor_id,branch,batch;
+end
+$$;
+
+alter procedure public.create_new_batch_advisor(varchar, integer, varchar) owner to postgres;
+
+create procedure public.new_course_offering(courseid character varying, semester_var integer, year_var integer,
+                                            mincgpa numeric, teacherid character varying, time_slotid integer)
+    language plpgsql
+as
+$$
+declare
+    section_var int;
+begin
+    if not exists(select *
+                  from course_offering as co
+                  where co.course_id = courseid and co.semester = semester_var and co.year = year_var) then
+        section_var = 1;
+    else
+        select max(co.section)
+        from course_offering as co
+        group by (co.course_id, co.semester, co.year)
+        into section_var;
+        section_var := section_var + 1;
+    end if;
+
+    insert into course_offering(course_id, semester, year, min_cgpa, teacher_id, section, time_slot_id)
+    values (courseid, semester_var, year_var, mincgpa, teacherid, section_var, time_slotid);
+    raise notice 'The section given to your requested course offering is: %',section_var;
+
+end
+$$;
+
+alter procedure public.new_course_offering(varchar, integer, integer, numeric, varchar, integer) owner to postgres;
+
+grant execute on procedure public.new_course_offering(varchar, integer, integer, numeric, varchar, integer) to teacher;
+
+create procedure public.import_grades_csv_to_table(table_name character varying, file_path character varying)
+    language plpgsql
+as
+$$
+begin
+    execute format('copy ' || table_name || ' from ''' || file_path || ''' delimiter '','' csv header');
+end;
+$$;
+
+alter procedure public.import_grades_csv_to_table(varchar, varchar) owner to postgres;
+
+create procedure public.import_time_slots(file_path character varying)
+    language plpgsql
+as
+$$
+begin
+    execute format('copy time_slots from ''' || file_path || ''' delimiter '','' csv header');
+end;
+$$;
+
+alter procedure public.import_time_slots(varchar) owner to postgres;
+
+create procedure public.create_new_dean_staff(staff_id character varying, name character varying)
+    language plpgsql
+as
+$$
+begin
+    -- todo: implement
+    execute format('create role %I with login password ''dean_staff'';grant dean_staff to %I;',
+                   'dean_staff_' || staff_id, 'dean_staff_' || staff_id);
+    execute format('insert into dean_staff_table(staff_id,name) values($1,$2)') using staff_id,name;
+end
+$$;
+
+alter procedure public.create_new_dean_staff(varchar, varchar) owner to postgres;
+
+create procedure public.raise_ticket(student_id character, course_id character varying, comment character varying,
+                                     teacher_id character varying, coid integer)
+    language plpgsql
+as
+$$
+declare
+    student_table_name varchar := 'student_' || student_id || '_ticket_table';
+    new_ticket_id      int     := 1;
+begin
+    -- todo: implement
+    execute format('select count(*) from %I', student_table_name) into new_ticket_id;
+    new_ticket_id := new_ticket_id + 1;
+    execute format('insert into %I(student_id,course_id,comment, teacher_id,status, ticket_id, co_id)
+            values($1,$2,$3,$4,null, $5,$6)',
+                   student_table_name) using student_id,course_id,comment,teacher_id, new_ticket_id, coid;
+end
+$$;
+
+alter procedure public.raise_ticket(char, varchar, varchar, varchar, integer) owner to postgres;
+

@@ -1,0 +1,39 @@
+--first, revoke all default permissions
+revoke all on all tables in schema public from teacher,student,batch_advisor,dean_staff;
+revoke all on all functions in schema public from  teacher,student,batch_advisor,dean_staff;
+revoke all on all procedures in schema public from  teacher,student,batch_advisor,dean_staff;
+revoke all on all sequences in schema public from  teacher,student,batch_advisor,dean_staff;
+drop role if exists dean, teacher, student, batch_advisor, dean_staff;
+
+create role dean with login password 'dean' superuser createrole ;
+create  role teacher;
+create  role student;
+create  role batch_advisor;
+create role dean_staff;
+
+--tables
+grant select on course_catalogue to teacher,student,batch_advisor,dean_staff;
+grant select on course_offering to teacher,student,batch_advisor,dean_staff;
+grant select on prerequisite to teacher,student,batch_advisor,dean_staff;
+grant select on teacher to teacher,student,batch_advisor,dean_staff;
+grant select on batch_advisor to teacher,student,batch_advisor,dean_staff;
+grant select on time_slots to teacher,student,batch_advisor;
+grant all on time_slots to dean_staff;
+grant select on student_record to teacher,student,batch_advisor,dean_staff;
+grant select on dean_staff_table to dean_staff;
+grant select on approved_courses to student,teacher,dean_staff;
+
+
+--procedures
+grant execute on procedure move_student_tickets(teacher_id character varying),give_verdict_teacher(teacher_id character varying, ticket_id integer, student_id character, verdict character varying) to teacher;
+grant execute on procedure move_teacher_tickets(batch_advisor_id character varying),give_verdict_batch_advisor(batch_advisor_id character varying, ticket_id integer, student_id character, verdict character varying) to batch_advisor;
+grant execute on procedure export_transcripts(semester_num integer, studentid character) to dean_staff;
+grant execute on procedure check_graduation_eligibility(studentid character) to dean_staff;
+grant execute on procedure new_course_offering(varchar, integer, integer, numeric, varchar, integer) to teacher;
+
+grant usage on sequence course_offering_id_seq to teacher;
+grant usage on sequence time_slots_time_slot_id_seq1 to dean_staff;
+
+grant pg_read_server_files to dean_staff,teacher;
+
+grant pg_write_server_files to dean_staff;

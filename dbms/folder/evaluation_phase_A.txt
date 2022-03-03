@@ -1,0 +1,268 @@
+--Evaluation
+
+--dean login
+psql -U dean academicPortal
+
+-- enter data in dean_staff_table
+call create_new_dean_staff('ds1','subhash');
+call create_new_dean_staff('ds2','prem'); 
+call create_new_dean_staff('ds3','ram kishan'); 
+
+-- insert teachers
+call create_new_teacher('t1','sudarshan','cs');
+call create_new_teacher('t2','puneet','cs'); 
+call create_new_teacher('t3','sreekumar','hs'); 
+
+-- insert students
+call create_new_student('2019ceb1035','vasundhara pant');
+call create_new_student('2019csb1086','gautam manocha'); 
+call create_new_student('2019csb1095','kshitiz arora');
+
+-- insert batch_advisors
+call create_new_batch_advisor('b1',2019,'csb');
+call create_new_batch_advisor('b2',2019,'ceb');
+
+-- insert courses into course_catalouge
+insert into course_catalogue values('ge103',4,1,1,4,4.5);
+insert into course_catalogue values('ma101',3,1,1,2,3);
+insert into course_catalogue values('ph101',3,1,1,2,2.5);
+insert into course_catalogue values('ch101',3,1,1,2,2.5);
+insert into course_catalogue values('cs201',4,1,2,4,4);
+insert into course_catalogue values('ce201',4,1,2,4,4);
+insert into course_catalogue values('hs201',3,1,1,2,3);
+insert into course_catalogue values('hs497',3,1,1,2,2);
+insert into course_catalogue values('cs301',3,1,1,2,4);
+insert into course_catalogue values('cs522',3,1,1,2,4);
+
+-- insert prerequisites
+insert into prerequisite values('cs201','ge103');
+insert into prerequisite values('cs301','cs201');
+insert into prerequisite values('cs301','ge103');
+
+-- insert required credits table
+call create_required_credits_table(2019);
+
+insert into required_credits_batch_2019 values('program_core',3);
+insert into required_credits_batch_2019 values('program_elective',3);
+insert into required_credits_batch_2019 values('open_elective',3);
+insert into required_credits_batch_2019 values('science_core',3);
+
+-- INSERT COURSE TYPE for a new batch
+call course_type(2019);
+
+insert into type_of_course_batch_2019 values('ge103','csb','program_core');
+insert into type_of_course_batch_2019 values('ge103','ceb','program_core');
+insert into type_of_course_batch_2019 values('ma101','csb','program_core');
+insert into type_of_course_batch_2019 values('ma101','ceb','program_core');
+insert into type_of_course_batch_2019 values('ph101','csb','science_core');
+insert into type_of_course_batch_2019 values('ph101','ceb','science_core');
+insert into type_of_course_batch_2019 values('ch101','csb','science_core');
+insert into type_of_course_batch_2019 values('ch101','ceb','science_core');
+insert into type_of_course_batch_2019 values('cs201','csb','program_core');
+insert into type_of_course_batch_2019 values('cs201','ceb','open_elective');
+insert into type_of_course_batch_2019 values('ce201','ceb','program_core');
+insert into type_of_course_batch_2019 values('hs201','csb','open_elective');
+insert into type_of_course_batch_2019 values('hs201','ceb','open_elective');
+insert into type_of_course_batch_2019 values('hs497','csb','open_elective');
+insert into type_of_course_batch_2019 values('hs497','ceb','open_elective');
+insert into type_of_course_batch_2019 values('cs301','csb','program_core');
+insert into type_of_course_batch_2019 values('cs301','ceb','program_core');
+insert into type_of_course_batch_2019 values('cs522','csb','program_elective');
+
+\q
+
+
+
+
+
+
+
+
+
+
+
+
+-- dean staff login 
+psql -U dean_staff_ds1 academicPortal
+
+-- timeslot from csv to table (by dean_staff)
+call import_time_slots('C:\Users\Public\Documents\slots.csv');
+
+\q
+
+
+
+
+
+
+
+
+-- teacher login
+psql -U teacher_t1 academicPortal
+insert into teacher_t1_teaches values('ge103',0);
+insert into teacher_t1_teaches values('ch101',0);
+\q
+
+psql -U teacher_t2 academicPortal
+insert into teacher_t2_teaches values('ma101',0);
+\q
+
+psql -U dean academicPortal
+call update_course_offering(1,2019); 
+\q
+
+psql -U teacher_t1 academicPortal
+insert into batchge103120191 values(2019);
+insert into batchch101120191 values(2019);
+insert into branchge103120191 values('csb');
+insert into branchch101120191 values('csb');
+insert into branchge103120191 values('ceb');
+\q
+
+psql -U teacher_t2 academicPortal
+insert into batchma101120191 values(2019);
+insert into branchma101120191 values('ceb');
+insert into branchma101120191 values('csb');
+\q
+
+psql -U student_2019ceb1035 academicPortal
+insert into student_2019ceb1035_takes values(1);
+insert into student_2019ceb1035_takes values(2);
+insert into student_2019ceb1035_takes values(3);
+\q
+
+psql -U dean academicPortal
+call update_approved_courses();
+call update_teacher_and_student_record(1,2019);
+\q
+
+psql -U teacher_t1 academicPortal
+call import_grades_csv_to_table('prof_record_ge103120191', 'C:\Users\Public\Documents\ge103.csv');
+\q
+
+psql -U dean academicPortal
+call update_record_dean(1,2019);
+\q
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+psql -U teacher_t3 academicPortal
+insert into teacher_t3_teaches values('cs201',5);
+insert into teacher_t3_teaches values('hs201',5);
+\q
+
+psql -U dean academicPortal
+call update_course_offering(1,2020); 
+\q
+
+psql -U teacher_t3 academicPortal
+insert into batchhs201120201 values(2019);
+insert into branchhs201120201 values('ceb');
+insert into batchcs201120201 values(2019);
+insert into branchcs201120201 values('ceb');
+\q
+
+psql -U student_2019ceb1035 academicPortal
+insert into student_2019ceb1035_takes values(4);
+insert into student_2019ceb1035_takes values(5);
+\q
+
+psql -U dean academicPortal
+call update_approved_courses();
+call update_teacher_and_student_record(1,2020);
+\q
+
+psql -U teacher_t3 academicPortal
+call import_grades_csv_to_table('prof_record_cs201120201', 'C:\Users\Public\Documents\cs201.csv');
+call import_grades_csv_to_table('prof_record_hs201120201', 'C:\Users\Public\Documents\hs201.csv');
+\q
+
+psql -U dean academicPortal
+call update_record_dean(1,2020);
+\q
+
+
+
+
+
+
+
+
+
+
+
+
+psql -U teacher_t2 academicPortal
+insert into teacher_t2_teaches values('cs301',5);
+insert into teacher_t2_teaches values('cs522',7);
+\q
+
+
+psql -U dean academicPortal
+call update_course_offering(1,2021); 
+\q
+
+psql -U teacher_t2 academicPortal
+insert into batchcs301120211 values(2019);
+insert into branchcs301120211 values('ceb');
+insert into batchcs522120211 values(2019);
+insert into branchcs522120211 values('ceb');
+\q
+
+psql -U student_2019ceb1035 academicPortal
+insert into student_2019ceb1035_takes values(6);
+insert into student_2019ceb1035_takes values(7);
+\q
+
+psql -U dean academicPortal
+call update_approved_courses();
+call update_teacher_and_student_record(1,2021);
+\q
+
+psql -U teacher_t2 academicPortal
+call import_grades_csv_to_table('prof_record_cs301120211', 'C:\Users\Public\Documents\cs301.csv');
+\q
+
+psql -U dean academicPortal
+call update_record_dean(1,2021);
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- without updates
+call check_graduation_eligibility('2019ceb1035');
+
+-- updating req credits
+update required_credits_batch_2019
+set required_credits = 0
+where type_of_course = 'program_elective' or type_of_course = 'science_core';
+
+-- with updates
+call check_graduation_eligibility('2019ceb1035');
+\q
+
+
+psql -U dean_staff_ds1 academicPortal
+call export_transcripts('2019ceb1035');
+\q
+

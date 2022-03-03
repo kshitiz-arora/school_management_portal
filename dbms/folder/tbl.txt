@@ -1,0 +1,416 @@
+drop table prerequisite;
+
+drop table dean_staff_table;
+
+drop table batch_advisor;
+
+drop table dean_ticket_table;
+
+drop table approved_courses;
+
+drop table course_offering;
+
+drop table course_catalogue;
+
+drop table time_slots;
+
+drop table teacher;
+
+drop table student_record;
+
+drop table t1_teacher_ticket_table;
+
+drop table teacher_t1_teaches;
+
+drop table t2_teacher_ticket_table;
+
+drop table teacher_t2_teaches;
+
+drop table t3_teacher_ticket_table;
+
+drop table teacher_t3_teaches;
+
+drop table student_2019ceb1035_semester_record;
+
+drop table student_2019ceb1035_ticket_table;
+
+drop table student_2019ceb1035_semester_1_courses;
+
+drop table student_2019ceb1035_takes;
+
+drop table student_2019csb1086_semester_record;
+
+drop table student_2019csb1086_ticket_table;
+
+drop table student_2019csb1086_semester_1_courses;
+
+drop table student_2019csb1086_takes;
+
+drop table student_2019csb1095_semester_record;
+
+drop table student_2019csb1095_ticket_table;
+
+drop table student_2019csb1095_semester_1_courses;
+
+drop table student_2019csb1095_takes;
+
+drop table b1_batch_advisor_ticket_table;
+
+drop table b2_batch_advisor_ticket_table;
+
+drop table required_credits_batch_2019;
+
+drop table type_of_course_batch_2019;
+
+drop table batchge103120191;
+
+drop table branchge103120191;
+
+drop table prof_record_ge103120191;
+
+drop table batchch101120191;
+
+drop table branchch101120191;
+
+drop table prof_record_ch101120191;
+
+drop table batchma101120191;
+
+drop table branchma101120191;
+
+drop table prof_record_ma101120191;
+
+drop table student_2019ceb1035_semester_2_courses;
+
+drop table batchcs201120201;
+
+drop table branchcs201120201;
+
+drop table prof_record_cs201120201;
+
+drop table batchhs201120201;
+
+drop table branchhs201120201;
+
+drop table prof_record_hs201120201;
+
+drop table student_2019ceb1035_semester_3_courses;
+
+drop table batchcs301120211;
+
+drop table branchcs301120211;
+
+drop table prof_record_cs301120211;
+
+drop table batchcs522120211;
+
+drop table branchcs522120211;
+
+drop table prof_record_cs522120211;
+
+
+
+create table public.course_catalogue
+(
+    course_id varchar(10) not null
+        constraint coursecatalogue_pk
+            primary key,
+    l         integer,
+    t         integer,
+    p         integer,
+    s         integer,
+    c         numeric(4, 2)
+);
+
+alter table public.course_catalogue
+    owner to postgres;
+
+grant select on public.course_catalogue to teacher;
+
+grant select on public.course_catalogue to student;
+
+grant select on public.course_catalogue to batch_advisor;
+
+grant select on public.course_catalogue to dean_staff;
+
+create table public.prerequisite
+(
+    course_id              varchar(10) not null
+        constraint prerequisite_course_catalogue_course_id_fk
+            references public.course_catalogue,
+    prerequisite_course_id varchar(10) not null
+        constraint prerequisite_course_catalogue_course_id_fk_2
+            references public.course_catalogue,
+    constraint prerequisite_pk
+        primary key (course_id, prerequisite_course_id)
+);
+
+alter table public.prerequisite
+    owner to postgres;
+
+grant select on public.prerequisite to teacher;
+
+grant select on public.prerequisite to student;
+
+grant select on public.prerequisite to batch_advisor;
+
+grant select on public.prerequisite to dean_staff;
+
+create table public.time_slots
+(
+    start_time   time                                                              not null,
+    end_time     time                                                              not null,
+    time_slot_id integer not null
+        constraint time_slots_pk
+            primary key
+);
+
+comment on table public.time_slots is 'start time and end time are in 24 hour format. For example: 09.05';
+
+alter table public.time_slots
+    owner to postgres;
+
+create unique index time_slots_time_slot_id_uindex
+    on public.time_slots (time_slot_id);
+
+grant select on public.time_slots to teacher;
+
+grant select on public.time_slots to student;
+
+grant select on public.time_slots to batch_advisor;
+
+grant delete, insert, references, select, trigger, truncate, update on public.time_slots to dean_staff;
+
+create table public.teacher
+(
+    teacher_id varchar(30) not null
+        constraint teacher_pk
+            primary key,
+    name       varchar(30),
+    department varchar(30)
+);
+
+alter table public.teacher
+    owner to postgres;
+
+create table public.course_offering
+(
+    course_id    varchar(10) not null
+        constraint course_offering_course_catalogue_course_id_fk
+            references public.course_catalogue,
+    semester     integer     not null,
+    year         integer     not null,
+    min_cgpa     numeric(4, 2) default 0,
+    teacher_id   varchar
+        constraint course_offering_teacher_teacher_id_fk
+            references public.teacher,
+    section      integer     not null,
+    time_slot_id integer
+        constraint course_offering_time_slots_time_slot_id_fk
+            references public.time_slots,
+    id           integer     not null
+        constraint course_offering_pk
+            primary key,
+    constraint """courseoffering""_pk"
+        unique (course_id, section, semester, year)
+);
+
+alter table public.course_offering
+    owner to postgres;
+
+create trigger before_course_offered
+    before insert
+    on public.course_offering
+    for each row
+execute procedure public.create_eligible_batches_and_branches();
+
+create trigger course_offered
+    before insert
+    on public.course_offering
+    for each row
+execute procedure public.course_offering_teacher();
+
+grant select on public.course_offering to teacher;
+
+grant select on public.course_offering to student;
+
+grant select on public.course_offering to batch_advisor;
+
+grant select on public.course_offering to dean_staff;
+
+create trigger teacher_ticket_trigger
+    before insert
+    on public.teacher
+    for each row
+execute procedure public.teacher_ticket_table_maker();
+
+create trigger teaches_trigger
+    after insert
+    on public.teacher
+    for each row
+execute procedure public.make_teaches_table();
+
+grant select on public.teacher to teacher;
+
+grant select on public.teacher to student;
+
+grant select on public.teacher to batch_advisor;
+
+grant select on public.teacher to dean_staff;
+
+create table public.student_record
+(
+    student_id               char(11) not null
+        constraint studentrecord_pk
+            primary key,
+    name                     varchar(30),
+    batch                    integer,
+    branch                   char(3),
+    program_core_credits     numeric(5, 2) default 0,
+    program_elective_credits numeric(5, 2) default 0,
+    open_elective_credits    numeric(5, 2) default 0,
+    science_core_credits     numeric(5, 2) default 0,
+    current_semester         integer       default 1
+);
+
+alter table public.student_record
+    owner to postgres;
+
+create trigger new_student_semester
+    before insert or update
+    on public.student_record
+    for each row
+execute procedure public.create_student_semester_record_and_ticket();
+
+create trigger takes_trigger
+    after insert
+    on public.student_record
+    for each row
+execute procedure public.make_takes_table();
+
+grant select on public.student_record to teacher;
+
+grant select on public.student_record to student;
+
+grant select on public.student_record to batch_advisor;
+
+grant select on public.student_record to dean_staff;
+
+create table public.dean_staff_table
+(
+    staff_id varchar(30) not null
+        constraint dean_staff_pk
+            primary key,
+    name     varchar(30) not null
+);
+
+comment on table public.dean_staff_table is 'Information about staff members of dean';
+
+alter table public.dean_staff_table
+    owner to postgres;
+
+create unique index dean_staff_staff_id_uindex
+    on public.dean_staff_table (staff_id);
+
+grant select on public.dean_staff_table to dean_staff;
+
+create table public.batch_advisor
+(
+    batch_advisor_id varchar not null
+        constraint batch_advisor_pk
+            primary key,
+    batch            integer,
+    branch           char(3)
+);
+
+alter table public.batch_advisor
+    owner to postgres;
+
+create trigger batch_advisor_ticket_trigger
+    before insert
+    on public.batch_advisor
+    for each row
+execute procedure public.batch_advisor_ticket_table_maker();
+
+grant select on public.batch_advisor to teacher;
+
+grant select on public.batch_advisor to student;
+
+grant select on public.batch_advisor to batch_advisor;
+
+grant select on public.batch_advisor to dean_staff;
+
+create table public.dean_ticket_table
+(
+    ticket_id             integer  not null,
+    course_id             varchar,
+    student_id            char(11) not null,
+    comment               varchar,
+    teacher_verdict       varchar,
+    batch_advisor_verdict varchar,
+    dean_verdict          varchar,
+    co_id                 integer,
+    constraint dean_ticket_table_pk
+        primary key (ticket_id, student_id)
+);
+
+alter table public.dean_ticket_table
+    owner to postgres;
+
+create table public.approved_courses
+(
+    course_id  varchar(10) not null,
+    student_id char(11)    not null
+        constraint approved_courses_student_record__fk
+            references public.student_record,
+    semester   integer     not null,
+    year       integer     not null,
+    teacher_id varchar(30) not null,
+    section    integer,
+    constraint approved_courses_pkey
+        primary key (course_id, student_id),
+    constraint approved_courses_course_offering__fk
+        foreign key (course_id, semester, year, section) references public.course_offering (course_id, semester, year, section)
+);
+
+comment on table public.approved_courses is 'Table containing approved courses of each student';
+
+alter table public.approved_courses
+    owner to postgres;
+
+create trigger check_eligibility_trigger
+    before insert
+    on public.approved_courses
+    for each row
+execute procedure public.eligibility_checker_trigger_function();
+
+grant select on public.approved_courses to teacher;
+
+grant select on public.approved_courses to student;
+
+grant select on public.approved_courses to dean_staff;
+
+drop role dean_staff_ds1;
+
+drop role dean_staff_ds2;
+
+drop role dean_staff_ds3;
+
+drop role teacher_t1;
+
+drop role teacher_t2;
+
+drop role teacher_t3;
+
+drop role student_2019ceb1035;
+
+drop role student_2019csb1086;
+
+drop role student_2019csb1095;
+
+drop role batch_advisor_b1;
+
+drop role batch_advisor_b2;
+
+
+
